@@ -60,7 +60,7 @@ func (this *ConsistentHash) Add(key string, weight int) {
 	this.update()
 }
 
-func (this *ConsistentHash) Remove(key string) {
+func (this *ConsistentHash) Del(key string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
