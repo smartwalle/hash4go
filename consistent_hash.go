@@ -103,7 +103,8 @@ func (this *ConsistentHash) update() {
 	}
 	var totalNode = this.replicas * len(this.weights)
 
-	this.hashList = nil
+	this.hashList = this.hashList[:0]
+	this.hashKeys = make(map[uint32]string)
 
 	var h = this.hash
 
