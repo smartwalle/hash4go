@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"hash"
 	"hash/crc32"
-	"math"
 	"sort"
 	"sync"
 )
@@ -30,49 +29,69 @@ func (n uint32List) Sort() {
 
 // --------------------------------------------------------------------------------
 type ConsistentHash struct {
-	replicas int
-	hash     hash.Hash32
-	mu       sync.RWMutex
-	hashList uint32List
-	hashKeys map[uint32]string
-	weights  map[string]int // 用于存储节点的权重信息
+	hash       hash.Hash32
+	mu         sync.RWMutex
+	hashList   uint32List
+	hashSum    map[uint32]string
+	hashMember map[string]int
 }
 
-func NewConsistentHash(replicas int, hash hash.Hash32) *ConsistentHash {
+func NewConsistentHash(hash hash.Hash32) *ConsistentHash {
 	var ch = &ConsistentHash{}
-	ch.replicas = replicas
 	ch.hash = hash
 
 	if ch.hash == nil {
 		ch.hash = crc32.NewIEEE()
 	}
 
-	ch.hashKeys = make(map[uint32]string)
-	ch.weights = make(map[string]int)
+	ch.hashSum = make(map[uint32]string)
+	ch.hashMember = make(map[string]int)
 	return ch
 }
 
-func (this *ConsistentHash) Add(key string, weight int) {
+func (this *ConsistentHash) Add(key string, node int) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
-	this.weights[key] = weight
-	this.update()
+	if node <= 0 {
+		node = 1
+	}
+
+	for i := 0; i < node; i++ {
+		this.hashSum[this.doHash(key, i)] = key
+	}
+
+	this.hashMember[key] = node
+
+	this.sort()
+}
+
+func (this *ConsistentHash) doHash(key string, node int) uint32 {
+	var h = this.hash
+	defer h.Reset()
+	h.Write([]byte(fmt.Sprintf("%s:%d", key, node)))
+	var sum = h.Sum32()
+	return sum
 }
 
 func (this *ConsistentHash) Del(key string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
-	delete(this.weights, key)
-	this.update()
+	var replica = this.hashMember[key]
+	for i := 0; i < replica; i++ {
+		delete(this.hashSum, this.doHash(key, i))
+	}
+
+	delete(this.hashMember, key)
+	this.sort()
 }
 
 func (this *ConsistentHash) Get(key string) string {
 	this.mu.RLock()
 	defer this.mu.RUnlock()
 
-	if len(this.weights) == 0 {
+	if len(this.hashMember) == 0 {
 		return ""
 	}
 
@@ -93,30 +112,17 @@ func (this *ConsistentHash) Get(key string) string {
 		index = 0
 	}
 
-	return this.hashKeys[this.hashList[index]]
+	return this.hashSum[this.hashList[index]]
 }
 
-func (this *ConsistentHash) update() {
-	var totalWeight int
-	for _, w := range this.weights {
-		totalWeight += w
+func (this *ConsistentHash) sort() {
+	hList := this.hashList[:0]
+
+	for sum := range this.hashSum {
+		hList = append(hList, sum)
 	}
-	var totalNode = this.replicas * len(this.weights)
 
-	this.hashList = this.hashList[:0]
-	this.hashKeys = make(map[uint32]string)
+	hList.Sort()
 
-	var h = this.hash
-
-	for key, weight := range this.weights {
-		var node = int(math.Floor(float64(weight) / float64(totalWeight) * float64(totalNode)))
-		for i := 0; i < node; i++ {
-			h.Write([]byte(fmt.Sprintf("%s:%d", key, i)))
-			var sum = h.Sum32()
-			this.hashList = append(this.hashList, sum)
-			this.hashKeys[sum] = key
-			h.Reset()
-		}
-	}
-	this.hashList.Sort()
+	this.hashList = hList
 }

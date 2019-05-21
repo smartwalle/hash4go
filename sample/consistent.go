@@ -7,11 +7,12 @@ import (
 )
 
 func main() {
-	var m = hash4go.NewConsistentHash(10, nil)
+	var m = hash4go.NewConsistentHash(nil)
 	m.Add("a", 1)
 	m.Add("b", 1)
 	m.Add("c", 1)
 	m.Add("d", 1)
+	m.Add("e", 1)
 
 	fmt.Println(m.Get("a"))
 	fmt.Println(m.Get("b"))
