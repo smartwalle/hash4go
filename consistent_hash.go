@@ -1,11 +1,16 @@
 package hash4go
 
 import (
+	"errors"
 	"fmt"
 	"hash"
 	"hash/crc32"
 	"sort"
 	"sync"
+)
+
+var (
+	ErrNotFoundElement = errors.New("hash4go: not found element")
 )
 
 // --------------------------------------------------------------------------------
@@ -29,11 +34,11 @@ func (n uint32List) Sort() {
 
 // --------------------------------------------------------------------------------
 type ConsistentHash struct {
-	hash       hash.Hash32
-	mu         sync.RWMutex
-	hashList   uint32List
-	hashSum    map[uint32]string
-	hashMember map[string]int
+	mu          sync.RWMutex
+	hash        hash.Hash32
+	hashSumList uint32List        // 用于存放排序之后 hash 值
+	hashSum     map[uint32]string // 用于存放 hash 值及其对应的 key
+	hashMember  map[string]int    // 用于存放 key 及其对应的节点数量
 }
 
 func NewConsistentHash(hash hash.Hash32) *ConsistentHash {
@@ -58,7 +63,7 @@ func (this *ConsistentHash) Add(key string, node int) {
 	}
 
 	for i := 0; i < node; i++ {
-		this.hashSum[this.doHash(key, i)] = key
+		this.hashSum[this.getHashSum(fmt.Sprintf("%s:%d", key, i))] = key
 	}
 
 	this.hashMember[key] = node
@@ -66,57 +71,50 @@ func (this *ConsistentHash) Add(key string, node int) {
 	this.sort()
 }
 
-func (this *ConsistentHash) doHash(key string, node int) uint32 {
-	var h = this.hash
-	defer h.Reset()
-	h.Write([]byte(fmt.Sprintf("%s:%d", key, node)))
-	var sum = h.Sum32()
-	return sum
-}
-
 func (this *ConsistentHash) Del(key string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
-	var replica = this.hashMember[key]
-	for i := 0; i < replica; i++ {
-		delete(this.hashSum, this.doHash(key, i))
+	var node = this.hashMember[key]
+	for i := 0; i < node; i++ {
+		delete(this.hashSum, this.getHashSum(fmt.Sprintf("%s:%d", key, i)))
 	}
 
 	delete(this.hashMember, key)
 	this.sort()
 }
 
-func (this *ConsistentHash) Get(key string) string {
+func (this *ConsistentHash) Get(key string) (string, error) {
 	this.mu.RLock()
 	defer this.mu.RUnlock()
 
-	if len(this.hashMember) == 0 {
-		return ""
+	if len(this.hashMember) == 0 || len(this.hashSumList) == 0 {
+		return "", ErrNotFoundElement
 	}
 
-	var h = this.hash
-	defer h.Reset()
+	var sum = this.getHashSum(key)
 
-	if _, err := h.Write([]byte(key)); err != nil {
-		return ""
-	}
-
-	var sum = h.Sum32()
-
-	var index = sort.Search(len(this.hashList), func(i int) bool {
-		return this.hashList[i] >= sum
+	var index = sort.Search(len(this.hashSumList), func(i int) bool {
+		return this.hashSumList[i] >= sum
 	})
 
-	if index == len(this.hashList) {
+	if index >= len(this.hashSumList) {
 		index = 0
 	}
 
-	return this.hashSum[this.hashList[index]]
+	return this.hashSum[this.hashSumList[index]], nil
+}
+
+func (this *ConsistentHash) getHashSum(key string) uint32 {
+	var h = this.hash
+	defer h.Reset()
+	h.Write([]byte(key))
+	var sum = h.Sum32()
+	return sum
 }
 
 func (this *ConsistentHash) sort() {
-	hList := this.hashList[:0]
+	hList := this.hashSumList[:0]
 
 	for sum := range this.hashSum {
 		hList = append(hList, sum)
@@ -124,5 +122,5 @@ func (this *ConsistentHash) sort() {
 
 	hList.Sort()
 
-	this.hashList = hList
+	this.hashSumList = hList
 }
