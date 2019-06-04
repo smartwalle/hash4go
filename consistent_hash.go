@@ -36,6 +36,7 @@ func (n uint32List) Sort() {
 type ConsistentHash struct {
 	mu          sync.RWMutex
 	hash        hash.Hash32
+	hMu         sync.Mutex
 	hashSumList uint32List        // 用于存放排序之后 hash 值
 	hashSum     map[uint32]string // 用于存放 hash 值及其对应的 key
 	hashMember  map[string]int    // 用于存放 key 及其对应的节点数量
@@ -106,6 +107,9 @@ func (this *ConsistentHash) Get(key string) (string, error) {
 }
 
 func (this *ConsistentHash) getHashSum(key string) uint32 {
+	this.hMu.Lock()
+	defer this.hMu.Unlock()
+
 	var h = this.hash
 	defer h.Reset()
 	h.Write([]byte(key))
